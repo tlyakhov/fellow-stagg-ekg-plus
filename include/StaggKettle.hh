@@ -41,7 +41,7 @@ class StaggKettle : public BLEClientCallbacks,
  private:
   // kettle states
   volatile State state;
-  unsigned int sequence = 0;
+  byte sequence = 0;
   byte currentTemp = 0;
   byte targetTemp = 0;
   byte userTemp = 0;

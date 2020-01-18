@@ -22,15 +22,6 @@ static uint8_t ekgInit[20] = {0xef, 0xdd, 0x0b, 0x30, 0x31, 0x32, 0x33,
                               0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30,
                               0x31, 0x32, 0x33, 0x34, 0x9a, 0x6d};
 
-// These commands seem to have a sequence number or CRC at byte 3? unsure.
-// Turns the unit on.
-const uint8_t ekgOn[8] = {0xef, 0xdd, 0x0a, 0x00, 0x00, 0x01, 0x01, 0x00};
-// Turns the unit off.
-const uint8_t ekgOff[8] = {0xef, 0xdd, 0x0a, 0x03, 0x00, 0x00, 0x03, 0x00};
-// Set temperature.
-const uint8_t ekgSet1[8] = {0xef, 0xdd, 0x0a, 0x01, 0x01, 0xba, 0xbb, 0x01};
-const uint8_t ekgSet2[8] = {0xef, 0xdd, 0x0a, 0x02, 0x01, 0xa0, 0xa2, 0x01};
-
 // Don't send commands more often than every X ms.
 const unsigned long debounceDelay = 200;
 
@@ -264,29 +255,34 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
 }
 
 void StaggKettle::sendCommand(StaggKettle::Command cmd) {
-  uint8_t buf[16];
-
   if (state != StaggKettle::State::Connected) {
     Serial.println("<StaggKettle::sendCommand> Not connected, returning.");
     return;
   }
 
   Serial.println(String("<StaggKettle::sendCommand> ") + String(cmd));
+  uint8_t buf[8];
+  buf[0] = 0xef; buf[1] = 0xdd; // Magic, packet start
+  buf[2] = 0x0a; // Command flag?
+  buf[3] = sequence;
   switch (cmd) {
     case StaggKettle::Command::On:
-      memcpy(buf, ekgOn, 8);
+      buf[4] = 0x00; // Power
+      buf[5] = 0x01; // On
       break;
     case StaggKettle::Command::Off:
-      memcpy(buf, ekgOff, 8);
+      buf[4] = 0x00; // Power
+      buf[5] = 0x00; // Off
       break;
     case StaggKettle::Command::Set:
-      memcpy(buf, ekgSet1, 8);
+      buf[4] = 0x01; // Temp
       buf[5] = userTemp;
       break;
     default:
       return;
   }
-  // buf[3] = sequence;
+  buf[6] = buf[3] + buf[5]; // Checksum
+  buf[7] = buf[4]; // Checksum?
   prcKettleSerial->writeValue(buf, 8);
   sequence++;
 }
@@ -294,7 +290,7 @@ void StaggKettle::sendCommand(StaggKettle::Command cmd) {
 void StaggKettle::setTemp(byte temp) {
   userTemp = temp;
   if (userTemp > 212) userTemp = 212;
-  if (userTemp < 130) userTemp = 130;
+  if (userTemp < 160) userTemp = 160;
   qCommands.push(StaggKettle::Command::Set);
 }
 

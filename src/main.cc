@@ -11,6 +11,7 @@
 
 #include "Free_Fonts.hh"
 #include "FSRScale.hh"
+#include "PIIDefines.hh"
 
 #define ADC_PIN0 35
 #define ADC_PIN1 36
@@ -18,8 +19,6 @@
 #define RANGE_PIN2 17
 #define BAT_CHK 13
 
-const char* wifiSSID = "YOURSSIDHERE";
-const char* wifiPassword = "YOURPASSHERE";
 const double fillThreshold = 4.0;
 
 static StaggKettle kettle;
@@ -55,11 +54,10 @@ void setup() {
   Serial.begin(115200);
   Serial.println("Starting Fellow Stagg EKG+ bridge application...");
   Serial.println("Connecting to WiFi...");
-  // WiFi.begin(wifiSSID, wifiPassword);
+  WiFi.begin(HOME_WIFI_SSID, HOME_WIFI_PASS);
   BLEDevice::init("");
 
-  Firebase.begin("yout_project_id.firebaseio.com",
-                 "your_Firebase_database_secret");
+  Firebase.begin(FIREBASE_PROJECT, FIREBASE_SECRET);
   Firebase.reconnectWiFi(true);
   Firebase.setMaxRetry(firebaseData, 3);
   Firebase.setMaxErrorQueue(firebaseData, 30);
@@ -128,9 +126,9 @@ void loop(void) {
   // update button state
   M5.update();
 
-  //if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() == WL_CONNECTED) {
     // Serial.println("wifi address: " + String(WiFi.localIP()));
-  //}
+  }
 
   kettle.loop();
   scale.loop();
@@ -183,7 +181,7 @@ void loop(void) {
     if (kettle.getState() == StaggKettle::State::Connected &&
         !kettle.isOn()) {
       Serial.println("A - ON!");
-      if (scale.getWeight() >= fillThreshold) {
+      if (true || scale.getWeight() >= fillThreshold) {
         kettle.on();
       } else {
         Serial.println("FILL LEVEL TOO LOW! " + String(scale.getWeight()) +
@@ -195,8 +193,8 @@ void loop(void) {
       kettle.off();
     }
   } else if (M5.BtnB.wasReleased()) {
-    // Serial.println("B - SET 1");
-    // kettle.setTemp(kettle.getTargetTemp() - 5);
+    Serial.println("B - SET");
+    kettle.setTemp(kettle.getTargetTemp() + 5);
   } else if (M5.BtnC.wasReleased()) {
     Serial.println("C - CALIBRATE");
     scale.nextCalibration();
