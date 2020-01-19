@@ -14,18 +14,22 @@ class StaggKettle : public BLEClientCallbacks,
   // Some constants...
   enum State { Inactive, Scanning, Found, Connecting, Connected };
   static const char* StateStrings[5];
+  const int RetryDelay = 5000; // 5s
   enum Command { On, Off, Set };
 
   StaggKettle();
   ~StaggKettle();
+  
+  State getState() const { return state; }
+  std::string getName() const { return name; }
+  bool isOn() const { return power; }
+  bool isLifted() const { return lifted; }
+  unsigned int getCountdown() const { return countdown; }
+  byte getCurrentTemp() const { return currentTemp; }
+  byte getTargetTemp() const { return targetTemp; }
+
   void scan();
   bool connectToServer();
-  State getState() { return state; }
-  bool isOn() { return power; }
-  bool isLifted() { return lifted; }
-  unsigned int getCountdown() { return countdown; }
-  byte getCurrentTemp() { return currentTemp; }
-  byte getTargetTemp() { return targetTemp; }
   void setTemp(byte temp);
   void on() { qCommands.push(Command::On); }
   void off() { qCommands.push(Command::Off); }
@@ -61,6 +65,7 @@ class StaggKettle : public BLEClientCallbacks,
   BLERemoteService* pRemoteService;
   BLERemoteCharacteristic* prcKettleSerial;
   BLEClient* pClient;
+  std::string name;
 
   // Device state
   unsigned long timeLastCommand;

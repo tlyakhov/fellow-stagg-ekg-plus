@@ -70,7 +70,7 @@ void StaggKettle::scan() {
 
 void StaggKettle::onConnect(BLEClient* pclient) {
   Serial.print("<StaggKettle::onConnect> Device ");
-  Serial.println(pDevice->getName().c_str());
+  Serial.println(name.c_str());
   state = StaggKettle::State::Connected;
   timeStateChange = millis();
   sequence = 0;
@@ -78,7 +78,7 @@ void StaggKettle::onConnect(BLEClient* pclient) {
 
 void StaggKettle::onDisconnect(BLEClient* pclient) {
   Serial.print("<StaggKettle::onDisconnect> Device ");
-  Serial.println(pDevice->getName().c_str());
+  Serial.println(name.c_str());
   state = StaggKettle::State::Inactive;
   timeStateChange = millis();
 }
@@ -103,7 +103,8 @@ bool StaggKettle::connectToServer() {
   timeStateChange = millis();
 
   Serial.print("<StaggKettle::connectToServer> Connecting to BLE device ");
-  Serial.println(pDevice->getName().c_str());
+  name.assign(pDevice->getName());
+  Serial.println(name.c_str());
 
   pClient = BLEDevice::createClient();
   pClient->setClientCallbacks(this);
@@ -226,6 +227,8 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
     return;
   }
 
+  // Pattern recognizer that expects frames of the form:
+  // 0xefdd followed by 0..253 arbitrary bytes.
   for (int i = 0; i < length; i++) {
     if (bufferState == 0 && pData[i] == 0xef) {
       bufferState = 1;
@@ -309,10 +312,11 @@ void StaggKettle::loop() {
   StaggKettle::Command cmd;
   switch (state) {
     case StaggKettle::State::Inactive:
+      if (timeNow - timeStateChange < StaggKettle::RetryDelay) break;
       scan();
       break;
     case StaggKettle::State::Scanning:
-      if (timeNow - timeStateChange < 15000) break;
+      if (timeNow - timeStateChange < StaggKettle::RetryDelay) break;
       if (pBLEScan != nullptr) pBLEScan->stop();
       state = StaggKettle::State::Inactive;
       timeStateChange = timeNow;
