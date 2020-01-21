@@ -54,7 +54,7 @@ class StaggKettle : public BLEClientCallbacks,
   unsigned int countdown;
 
   // kettle data states
-  uint8_t buffer[256];
+  uint8_t buffer[64];
   int bufferPos = 0;
   int bufferState = 0;
   std::unordered_map<uint8_t, uint8_t*> unknownStates;

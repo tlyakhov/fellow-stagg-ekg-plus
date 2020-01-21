@@ -25,6 +25,7 @@ static StaggKettle kettle;
 static FirebaseData firebaseData;
 static Preferences prefs;
 static FSRScale scale(&prefs, ADC_PIN0);
+static FirebaseJson json;
 
 // State tracking for UI
 static StaggKettle::State xState = StaggKettle::State::Connected;
@@ -54,30 +55,39 @@ void onWiFiEvent(WiFiEvent_t event)
   }
 }
 
-void setup() {
-  // Setup the M5 Core
-  M5.begin();
-  dacWrite(25, 0);  // Disable speaker DAC
-
-  prefs.begin("fellow-stagg", false);
-
-  // pinMode(ADC_PIN0, INPUT)
-
-  // Setup the TFT display
-  M5.Lcd.setBrightness(100);
-  M5.Lcd.fillScreen(TFT_BLACK);
-  // Serial baud
-  Serial.begin(115200);
-  Serial.println("Starting Fellow Stagg EKG+ bridge application...");
+void setupWiFi() {
+  Serial.print("Free heap: ");
+  Serial.println(ESP.getFreeHeap());
   Serial.println("Connecting to WiFi...");
+  WiFi.mode(WIFI_MODE_STA);
   WiFi.onEvent(onWiFiEvent);
+  WiFi.config(HOME_WIFI_IP, HOME_WIFI_GATEWAY, HOME_WIFI_SUBNET, HOME_WIFI_DNS);
   WiFi.begin(HOME_WIFI_SSID, HOME_WIFI_PASS);
-  BLEDevice::init("");
   Firebase.begin(FIREBASE_PROJECT, FIREBASE_SECRET);
   Firebase.reconnectWiFi(true);
   Firebase.setMaxRetry(firebaseData, 3);
-  Firebase.setMaxErrorQueue(firebaseData, 30);
+  Firebase.setMaxErrorQueue(firebaseData, 15);
+  Firebase.setwriteSizeLimit(firebaseData, "tiny");
+  Serial.print("Free heap: ");
+  Serial.println(ESP.getFreeHeap());
+}
 
+void setup() {
+  // Disable speaker DAC
+  dacWrite(25, 0);
+  // Setup the M5 Core
+  M5.begin(true, false, true, false);
+  // Init bluetooth
+  BLEDevice::init("");
+  esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+  // NVRAM settings
+  prefs.begin("fellow-stagg", false);
+  // Setup the TFT display
+  M5.Lcd.setBrightness(100);
+  M5.Lcd.fillScreen(TFT_BLACK);
+  Serial.println("Starting Fellow Stagg EKG+ bridge application...");
+  // Init wifi
+  setupWiFi();
   // Let's scan for a kettle!
   kettle.scan();
 }
@@ -142,7 +152,10 @@ void drawScale() {
 }
 
 void refreshFirebase() {
-  if (WiFi.status() != WL_CONNECTED ||
+  Serial.print("Free heap: ");
+  Serial.println(ESP.getFreeHeap());
+
+  if (!WiFi.isConnected() ||
       kettle.getState() != StaggKettle::State::Connected ||
       kettle.getName().size() == 0)
     return;
@@ -152,7 +165,7 @@ void refreshFirebase() {
   Serial.print(path.c_str());
   Serial.println(" from " + String(WiFi.localIP().toString()));
   
-  FirebaseJson json;
+  json.clear();
   json.add("isOn", kettle.isOn());
   json.add("isLifted", kettle.isLifted());
   json.add("currentTemp", (int)kettle.getCurrentTemp());

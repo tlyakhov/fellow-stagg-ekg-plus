@@ -86,13 +86,16 @@ void StaggKettle::onDisconnect(BLEClient* pclient) {
 // Called by BLE when a device has been found during a scan.
 void StaggKettle::onResult(BLEAdvertisedDevice advertiser) {
   Serial.print("<StaggKettle::onResult> BLE Advertised Device found: ");
-  Serial.println(advertiser.toString().c_str());
+  Serial.print(advertiser.getName().c_str());
+  Serial.print(" - ");
+  Serial.println(advertiser.getAddress().toString().c_str());
 
   // Does this device provide the service for our kettle?
   if (advertiser.haveServiceUUID() &&
       advertiser.isAdvertisingService(ekgServiceUUID)) {
-    BLEDevice::getScan()->stop();
+    pBLEScan->stop();
     pDevice = new BLEAdvertisedDevice(advertiser);
+    pBLEScan->clearResults();
     state = StaggKettle::State::Found;
     timeStateChange = millis();
   }
@@ -106,6 +109,9 @@ bool StaggKettle::connectToServer() {
   name.assign(pDevice->getName());
   Serial.println(name.c_str());
 
+  if (pClient != nullptr) {
+    delete pClient;
+  }
   pClient = BLEDevice::createClient();
   pClient->setClientCallbacks(this);
   Serial.println("<StaggKettle::connectToServer> Created BLE client");
@@ -168,8 +174,8 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length) {
         power = false;
         //Serial.println("<StaggKettle::parseEvent> Off");
       } else {
-        Serial.println("<StaggKettle::parseEvent> Power unknown state " +
-                       String(data[1]));
+        Serial.print("<StaggKettle::parseEvent> Power unknown state ");
+        Serial.println(data[1]);
       }
       break;
     case 2:  // Target temperature
@@ -194,8 +200,8 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length) {
         // Serial.println("<StaggKettle::parseEvent> Kettle on base.");
         lifted = false;
       } else {
-        Serial.println("<StaggKettle::parseEvent> Lifting unknown state " +
-                       String(data[1]));
+        Serial.print("<StaggKettle::parseEvent> Lifting unknown state ");
+        Serial.println(data[1]);
       }
       break;
     case 1:  // Unknown, usually 0x01, 0x00, 0x00, 0x00
@@ -212,7 +218,8 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length) {
       memcpy(unknownStates[data[0]], data, length);
       Serial.print("<StaggKettle::parseEvent> Unknown state change: ");
       for (int i = 0; i < length; i++) {
-        Serial.print(String(data[i], HEX) + " ");
+        Serial.print(String(data[i], HEX));
+        Serial.print(" ");
       }
       Serial.println("END");
       break;
@@ -228,7 +235,7 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
   }
 
   // Pattern recognizer that expects frames of the form:
-  // 0xefdd followed by 0..253 arbitrary bytes.
+  // 0xefdd followed by 0..62 arbitrary bytes.
   for (int i = 0; i < length; i++) {
     if (bufferState == 0 && pData[i] == 0xef) {
       bufferState = 1;
@@ -240,7 +247,7 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
       continue;
     } else if (bufferState == 2) {
       buffer[bufferPos] = pData[i];
-      if (bufferPos >= 255) {
+      if (bufferPos >= 63) {
         bufferState = 0;
         bufferPos = 0;
         continue;
@@ -317,7 +324,10 @@ void StaggKettle::loop() {
       break;
     case StaggKettle::State::Scanning:
       if (timeNow - timeStateChange < StaggKettle::RetryDelay) break;
-      if (pBLEScan != nullptr) pBLEScan->stop();
+      if (pBLEScan != nullptr) {
+        pBLEScan->stop();
+        pBLEScan->clearResults();
+      }
       state = StaggKettle::State::Inactive;
       timeStateChange = timeNow;
       break;
