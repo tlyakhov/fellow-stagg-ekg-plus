@@ -1,5 +1,4 @@
 #include "StaggKettle.hh"
-#include <M5Stack.h>
 
 // Friendly names of states.
  const char* StaggKettle::StateStrings[] = {"Inactive", "Scanning...", "Found",
@@ -81,6 +80,10 @@ void StaggKettle::onDisconnect(BLEClient* pclient) {
   Serial.println(name.c_str());
   state = StaggKettle::State::Inactive;
   timeStateChange = millis();
+  if (pRemoteService != nullptr) {
+    delete pRemoteService;
+    pRemoteService = nullptr;
+  }
 }
 
 // Called by BLE when a device has been found during a scan.
@@ -131,6 +134,8 @@ bool StaggKettle::connectToServer() {
         "<StaggKettle::connectToServer> Failed to find EKG+ service UUID: ");
     Serial.println(ekgServiceUUID.toString().c_str());
     pClient->disconnect();
+    delete pClient;
+    pClient = nullptr;
     state = StaggKettle::State::Inactive;
     timeStateChange = millis();
 
@@ -147,6 +152,8 @@ bool StaggKettle::connectToServer() {
         "UUID: ");
     Serial.println(ekgCharUUID.toString().c_str());
     pClient->disconnect();
+    delete pClient;
+    pClient = nullptr;    
     state = StaggKettle::State::Inactive;
     timeStateChange = millis();
 
@@ -164,50 +171,81 @@ bool StaggKettle::connectToServer() {
   return true;
 }
 
-void StaggKettle::parseEvent(const uint8_t* data, size_t length) {
+void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
   switch (data[0]) {
     case 0:  // Power
       if (data[1] == 1) {
         power = true;
-        //Serial.println("<StaggKettle::parseEvent> On");
+        if (debug)
+          Serial.println("<StaggKettle::parseEvent> On");
       } else if (data[1] == 0) {
         power = false;
-        //Serial.println("<StaggKettle::parseEvent> Off");
+        if (debug)
+          Serial.println("<StaggKettle::parseEvent> Off");
       } else {
         Serial.print("<StaggKettle::parseEvent> Power unknown state ");
         Serial.println(data[1]);
       }
       break;
+    case 1:  // Hold
+      if (data[1] == 1) {
+        hold = true;
+        if (debug)
+          Serial.println("<StaggKettle::parseEvent> Hold [on]");
+      }
+      else if(data[1] == 0) {
+        hold = false;
+        if (debug)
+          Serial.println("<StaggKettle::parseEvent> Hold [off]");
+      }
+      else {
+        Serial.print("<StaggKettle::parseEvent> Hold unknown state ");
+        Serial.println(data[1]);
+      }
+      break;
     case 2:  // Target temperature
       targetTemp = data[1];
-      //Serial.println("<StaggKettle::parseEvent> Target " + String(targetTemp));
+      units = data[2] == 1 ? TempUnits::Fahrenheit : TempUnits::Celsius;
+      if (debug) {
+        Serial.print("<StaggKettle::parseEvent> Target ");
+        Serial.print(String(targetTemp));
+        Serial.println(units == TempUnits::Fahrenheit ? "F" : "C");        
+      }
       break;
     case 3:  // Current temperature
       currentTemp = data[1];
-      //Serial.println("<StaggKettle::parseEvent> Current " +
-      //               String(currentTemp));
+      units = data[2] == 1 ? TempUnits::Fahrenheit : TempUnits::Celsius;      
+      if (debug) {
+        Serial.print("<StaggKettle::parseEvent> Current ");
+        Serial.print(String(currentTemp));
+        Serial.println(units == TempUnits::Fahrenheit ? "F" : "C");
+      }
       break;
     case 4:  // Countdown when lifted?
       countdown = data[1];
-      // Serial.println("<StaggKettle::parseEvent> Countdown " +
-      // String(countdown));
+      if(debug) {
+        Serial.print("<StaggKettle::parseEvent> Countdown ");
+        Serial.println(String(countdown));
+      }
       break;
     case 8:  // Kettle lifted
       if (data[1] == 0) {
-        // Serial.println("<StaggKettle::parseEvent> Kettle lifted!");
+        if(debug)
+          Serial.println("<StaggKettle::parseEvent> Kettle lifted!");
         lifted = true;
       } else if (data[1] == 1) {
-        // Serial.println("<StaggKettle::parseEvent> Kettle on base.");
+        if(debug)
+          Serial.println("<StaggKettle::parseEvent> Kettle on base.");
         lifted = false;
       } else {
         Serial.print("<StaggKettle::parseEvent> Lifting unknown state ");
         Serial.println(data[1]);
       }
       break;
-    case 1:  // Unknown, usually 0x01, 0x00, 0x00, 0x00
-    case 5:  // Unknown, usually 0x05, 0xFF, 0xFF, 0xFF, 0xFF
-    case 7:  // Unknown, usually 0x07, 0x00, 0x00, 0x00
+    case 5:  // Unknown, usually 0x05, 0xFF, 0xFF, 0xFF
     case 6:  // Unknown, usually 0x06, 0x00, 0x00
+      // This may be a "kettle has boiled" signal, or "kettle holding" signal.
+    case 7:  // Unknown, usually 0x07, 0x00, 0x00
     default:
       if (unknownStates.count(data[0]) != 0 &&
           memcmp(data, unknownStates[data[0]], length) == 0)
@@ -253,7 +291,7 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
         continue;
       }
       if (i + 1 < length && pData[i] == 0xef && pData[i + 1] == 0xdd) {
-        if (bufferPos > 1) this->parseEvent(buffer, bufferPos - 1);
+        if (bufferPos > 1) this->parseEvent(buffer, bufferPos - 1, false);
         bufferPos = 0;
         bufferState = 1;
       } else {

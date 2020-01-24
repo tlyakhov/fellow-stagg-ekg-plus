@@ -5,11 +5,9 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <FirebaseESP32.h>
-#include <M5Stack.h>
 #include <Preferences.h>
 #include <BLEDevice.h>
 
-#include "Free_Fonts.hh"
 #include "FSRScale.hh"
 #include "PIIDefines.hh"
 
@@ -38,8 +36,9 @@ static double xWeight = -1;
 static byte xCalMode = -1;
 static bool refreshState = false;
 static bool refreshTemps = false;
-static bool refreshData = true;
-static unsigned long lastDataRefresh = 0;
+static bool refreshFirebaseState = true;
+static unsigned long lastFirebaseStateRefresh = 0;
+static unsigned long lastFirebasePoll = 0;
 
 void onWiFiEvent(WiFiEvent_t event)
 {
@@ -73,18 +72,12 @@ void setupWiFi() {
 }
 
 void setup() {
-  // Disable speaker DAC
-  dacWrite(25, 0);
-  // Setup the M5 Core
-  M5.begin(true, false, true, false);
+  Serial.begin(115200);
   // Init bluetooth
   BLEDevice::init("");
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
   // NVRAM settings
   prefs.begin("fellow-stagg", false);
-  // Setup the TFT display
-  M5.Lcd.setBrightness(100);
-  M5.Lcd.fillScreen(TFT_BLACK);
   Serial.println("Starting Fellow Stagg EKG+ bridge application...");
   // Init wifi
   setupWiFi();
@@ -92,66 +85,7 @@ void setup() {
   kettle.scan();
 }
 
-void drawState() {
-  int fh = M5.Lcd.fontHeight(GFXFF);
-  int ypos = 120 - fh * 2 - fh / 2;
-  M5.Lcd.fillRect(0, ypos, 320, fh, TFT_BLACK);
-  if (kettle.getState() == StaggKettle::State::Connected) {
-    if (kettle.isLifted()) {
-      M5.Lcd.setTextColor(TFT_GREENYELLOW, TFT_BLACK);
-      M5.Lcd.drawString("Lifted", 160, ypos, GFXFF);
-    } else if (kettle.isOn()) {
-      M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-      M5.Lcd.drawString("Heating", 160, ypos, GFXFF);
-    } else {
-      M5.Lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-      M5.Lcd.drawString("Off", 160, ypos, GFXFF);
-    }
-  } else {
-    M5.Lcd.setTextColor(TFT_WHITE, TFT_BLACK);
-    M5.Lcd.drawString(StaggKettle::StateStrings[kettle.getState()],
-                      160, ypos, GFXFF);
-  }
-}
-void drawTemps() {
-  int fh = M5.Lcd.fontHeight(GFXFF);
-  int ypos = 120 - fh * 1 - fh / 2;
-  M5.Lcd.fillRect(0, ypos, 320, fh, TFT_BLACK);
-  if (kettle.getState() != StaggKettle::State::Connected) {
-    return;
-  }
-
-  if (!kettle.isOn() || kettle.isLifted()) {
-    M5.Lcd.setTextColor(TFT_BLUE, TFT_BLACK);
-    M5.Lcd.drawString("Current: --- -> " + String(kettle.getTargetTemp()), 160,
-                      ypos, GFXFF);
-  } else {
-    M5.Lcd.setTextColor(TFT_GREEN, TFT_BLACK);
-    M5.Lcd.drawString("Current: " + String(kettle.getCurrentTemp()) + " -> " +
-                          String(kettle.getTargetTemp()),
-                      160, ypos, GFXFF);
-  }
-}
-void drawScale() {
-  int fh = M5.Lcd.fontHeight(GFXFF);
-  int ypos = 120 - fh / 2;
-  M5.Lcd.fillRect(0, ypos, 320, fh, TFT_BLACK);
-  if (scale.getCalibrationMode() == 0) {
-    M5.Lcd.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
-    M5.Lcd.drawString("Fill: " + String(scale.getWeight()) + "oz", 160, ypos,
-                      GFXFF);
-  } else {
-    M5.Lcd.setFreeFont(FSSB12);
-    M5.Lcd.setTextColor(TFT_YELLOW, TFT_BLACK);
-    M5.Lcd.drawString(
-        "Fill kettle to exactly " +
-            String(Calibration::Ounces[scale.getCalibrationMode() - 1]) +
-            "oz, then click button",
-        160, ypos, GFXFF);
-  }
-}
-
-void refreshFirebase() {
+void updateFirebaseState() {
   Serial.print("Free heap: ");
   Serial.println(ESP.getFreeHeap());
 
@@ -168,8 +102,11 @@ void refreshFirebase() {
   json.clear();
   json.add("isOn", kettle.isOn());
   json.add("isLifted", kettle.isLifted());
+  json.add("isHold", kettle.isHold());
   json.add("currentTemp", (int)kettle.getCurrentTemp());
   json.add("targetTemp", (int)kettle.getTargetTemp());
+  json.add("units", (int)kettle.getUnits());
+  json.add("weight", scale.getWeight());
   json.add("lastUpdated", String(millis()));
   if(!Firebase.setJSON(firebaseData, path.c_str(), json)) {
     Serial.println("Firebase update failed.");
@@ -177,9 +114,39 @@ void refreshFirebase() {
   }
 }
 
+void pollFirebase() {
+   if (!WiFi.isConnected() ||
+      kettle.getState() != StaggKettle::State::Connected ||
+      kettle.getName().size() == 0)
+    return;
+
+  std::string path = std::string("/") + kettle.getName() + "/command";
+  Serial.print("Polling Firebase ");
+  Serial.print(path.c_str());
+  Serial.println(" from " + String(WiFi.localIP().toString()));
+  if (!Firebase.pathExist(firebaseData, path.c_str()))
+    return;
+
+  if(!Firebase.getJSON(firebaseData, path.c_str())) {
+    Serial.println("Firebase polling failed.");
+    Serial.println(firebaseData.errorReason());
+    return;
+  }
+  FirebaseJson &result = firebaseData.jsonObject();
+  FirebaseJsonData data;
+  if(result.get(data, "off")) {
+    kettle.off();
+  } else if(result.get(data, "on")) {
+    kettle.on();
+  }
+  if(result.get(data, "temp")) {
+    if(result.get(data, "value"))
+      kettle.setTemp((byte)data.intValue);
+  }
+  Firebase.deleteNode(firebaseData, path.c_str());
+}
+
 void loop(void) {
-  // update button state
-  M5.update();
   kettle.loop();
   scale.loop();
 
@@ -191,57 +158,58 @@ void loop(void) {
     xState = kettle.getState();
     refreshState = true;
     refreshTemps = true;
-    refreshData = true;
+    refreshFirebaseState = true;
   }
   if (xPower != kettle.isOn()) {
     xPower = kettle.isOn();
     refreshState = true;
     refreshTemps = true;
-    refreshData = true;
+    refreshFirebaseState = true;
   }
   if (xLifted != kettle.isLifted()) {
     xLifted = kettle.isLifted();
     refreshState = true;
     refreshTemps = true;
-    refreshData = true;
+    refreshFirebaseState = true;
   }
   if (xCurrentTemp != kettle.getCurrentTemp()) {
     xCurrentTemp = kettle.getCurrentTemp();
     refreshTemps = true;
-    refreshData = true;
+    refreshFirebaseState = true;
   }
   if (xTargetTemp != kettle.getTargetTemp()) {
     xTargetTemp = kettle.getTargetTemp();
     refreshTemps = true;
-    refreshData = true;
+    refreshFirebaseState = true;
   }
-
-  unsigned long timeNow = millis();
-  if (timeNow < lastDataRefresh)
-    lastDataRefresh = timeNow;
-
-  if(refreshData && timeNow - lastDataRefresh > 5000) {
-    refreshFirebase();
-    refreshData = false;
-    lastDataRefresh = timeNow;
-  }
-
-  // UI drawing
-
-  M5.Lcd.setFreeFont(FSSB18);
-  M5.Lcd.setTextDatum(TC_DATUM);
-  if (refreshState) drawState();
-  if (refreshTemps) drawTemps();
 
   if (xWeight != scale.getWeight() || xCalMode != scale.getCalibrationMode()) {
     xWeight = scale.getWeight();
     xCalMode = scale.getCalibrationMode();
-    drawScale();
+    refreshFirebaseState = true;
+  }
+
+  unsigned long timeNow = millis();
+  // Handle 64 bit wraparound
+  if (timeNow < lastFirebaseStateRefresh)
+    lastFirebaseStateRefresh = timeNow;
+  if (timeNow < lastFirebasePoll)
+    lastFirebasePoll = timeNow;
+
+  if(refreshFirebaseState && timeNow - lastFirebaseStateRefresh > 5000) {
+    updateFirebaseState();
+    refreshFirebaseState = false;
+    lastFirebaseStateRefresh = timeNow;
+  }
+
+  if (timeNow - lastFirebasePoll > 3000) {
+    pollFirebase();
+    lastFirebasePoll = timeNow;
   }
 
   // Input checking
 
-  if (M5.BtnA.wasReleased()) {
+  /*if (M5.BtnA.wasReleased()) {
     // M5.Speaker.beep();
     if (kettle.getState() == StaggKettle::State::Connected &&
         !kettle.isOn()) {
@@ -266,5 +234,5 @@ void loop(void) {
   } else if (M5.BtnC.wasReleased()) {
     Serial.println("C - CALIBRATE");
     scale.nextCalibration();
-  }
+  }*/
 }

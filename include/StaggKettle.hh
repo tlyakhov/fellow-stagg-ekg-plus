@@ -16,6 +16,7 @@ class StaggKettle : public BLEClientCallbacks,
   static const char* StateStrings[5];
   const int RetryDelay = 5000; // 5s
   enum Command { On, Off, Set };
+  enum TempUnits { Fahrenheit, Celsius };
 
   StaggKettle();
   ~StaggKettle();
@@ -24,6 +25,8 @@ class StaggKettle : public BLEClientCallbacks,
   std::string getName() const { return name; }
   bool isOn() const { return power; }
   bool isLifted() const { return lifted; }
+  bool isHold() const { return hold; }
+  TempUnits getUnits() const { return units; }
   unsigned int getCountdown() const { return countdown; }
   byte getCurrentTemp() const { return currentTemp; }
   byte getTargetTemp() const { return targetTemp; }
@@ -51,6 +54,8 @@ class StaggKettle : public BLEClientCallbacks,
   byte userTemp = 0;
   bool lifted = false;
   bool power = false;
+  bool hold = false;
+  TempUnits units = TempUnits::Fahrenheit;
   unsigned int countdown;
 
   // kettle data states
@@ -73,7 +78,7 @@ class StaggKettle : public BLEClientCallbacks,
   std::queue<Command> qCommands;
   std::mutex mtxState;
 
-  void parseEvent(const uint8_t* data, size_t length);
+  void parseEvent(const uint8_t* data, size_t length, bool debug);
   void sendCommand(Command cmd);
 };
 #endif

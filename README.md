@@ -4,7 +4,7 @@ WiFi & cloud bridge for the [Fellow Stagg EKG+](https://fellowproducts.com/produ
 
 ## Requirements
 
-Designed to be deployed on an [M5Stack FIRE](https://m5stack.com/products/fire-iot-development-kit), though any ESP32-based board will probably work , assuming BLE & WiFi are available. PSRAM is highly recommended because the TLS connection for communicating with Firebase requires a lot (80KB+) of RAM to work.
+Designed to be deployed on an [ESP32-WROVER-B](https://www.espressif.com/en/media_overview/news/new-espressif-module-esp32-wrover-b), though any ESP32-based board will probably work , assuming BLE & WiFi are available. PSRAM is mandatory because the TLS connection for communicating with Firebase requires a lot (100KB+) of RAM to work.
 
 Other hardware used is an FSR (Force Sensitive Resistor, [Interlink Electronics FSR-402](https://www.interlinkelectronics.com/fsr-402)) to measure fill (e.g. how many oz of water in the kettle), to avoid turning on an empty kettle remotely.
 
@@ -22,17 +22,16 @@ Basic details:
 * 8 byte commands for power/temp setting
 * Arbitrary length state data, several type identifiers:
     * 0x00 - Power state (on or off)
-    * 0x01 - Unknown, usually 0x01, 0x00, 0x00, 0x00
-    * 0x02 - Target temperature
-    * 0x03 - Actual temperature
+    * 0x01 - Hold state
+    * 0x02 - Target temperature & units
+    * 0x03 - Actual temperature & units
     * 0x04 - Countdown when kettle is lifted off base
-    * 0x05 - Unknown, usually 0x05, 0xFF, 0xFF, 0xFF, 0xFF
-    * 0x06 - Unknown, usually 0x06, 0x00, 0x00
-    * 0x07 - Unknown, usually 0x07, 0x00, 0x00, 0x00
+    * 0x05 - Unknown, usually 0x05, 0xFF, 0xFF, 0xFF
+    * 0x06 - Whether kettle is in hold mode or not
+    * 0x07 - Unknown, usually 0x07, 0x00, 0x00
     * 0x08 - Kettle is lifted off base?
 
 ## Tim's TODOs
 
-* Test on M5Stack FIRE
 * Figure out how to mount the FSR on the kettle in a non-janky way.
 
