@@ -25,6 +25,7 @@ class FSRScale {
   byte calMode = 0;
   uint16_t fsrBuffer[Calibration::BufferSize];
   byte fsrBufferPos = 0;
+  double prevAvg;
   double weight;
   double coeffs[Calibration::CurveOrder + 1];
   double calReadings[Calibration::Count];

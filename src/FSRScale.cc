@@ -12,6 +12,7 @@ FSRScale::FSRScale(Preferences *prefs, byte pin) : prefs(prefs), pin(pin) {
 FSRScale::~FSRScale() {}
 
 void FSRScale::nextCalibration() {
+  prevAvg = -1;
   if (calMode < Calibration::Count) {
     calMode++;
     return;
@@ -51,10 +52,11 @@ void FSRScale::loop() {
   weight =
       coeffs[0] * fsrAverage * fsrAverage + coeffs[1] * fsrAverage + coeffs[2];
 
-  if (calMode >= 1 && calMode <= Calibration::Count) {
+  if (calMode >= 1 && calMode <= Calibration::Count && prevAvg != fsrAverage) {
     Serial.println("<Scale::Loop> Calibration value for " +
                    String(Calibration::Ounces[calMode - 1]) +
                    "oz = " + String(fsrAverage));
     calReadings[calMode - 1] = fsrAverage;
+    prevAvg = fsrAverage;
   }
 }

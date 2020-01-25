@@ -9,15 +9,13 @@
 #include <BLEDevice.h>
 
 #include "FSRScale.hh"
-#include "PIIDefines.hh"
+#include "PIIDefinesExample.hh"
 
-#define ADC_PIN0 35
-#define ADC_PIN1 36
-#define RANGE_PIN1 16
-#define RANGE_PIN2 17
-#define BAT_CHK 13
+#define ADC_PIN0 32
 
 const double fillThreshold = 4.0;
+const unsigned long firebaseStateInterval = 5000;
+const unsigned long firebasePollInterval = 3000;
 
 static StaggKettle kettle;
 static FirebaseData firebaseData;
@@ -39,6 +37,7 @@ static bool refreshTemps = false;
 static bool refreshFirebaseState = true;
 static unsigned long lastFirebaseStateRefresh = 0;
 static unsigned long lastFirebasePoll = 0;
+static unsigned long lastHeapDebug = 0;
 
 void onWiFiEvent(WiFiEvent_t event)
 {
@@ -55,8 +54,6 @@ void onWiFiEvent(WiFiEvent_t event)
 }
 
 void setupWiFi() {
-  Serial.print("Free heap: ");
-  Serial.println(ESP.getFreeHeap());
   Serial.println("Connecting to WiFi...");
   WiFi.mode(WIFI_MODE_STA);
   WiFi.onEvent(onWiFiEvent);
@@ -67,8 +64,6 @@ void setupWiFi() {
   Firebase.setMaxRetry(firebaseData, 3);
   Firebase.setMaxErrorQueue(firebaseData, 15);
   Firebase.setwriteSizeLimit(firebaseData, "tiny");
-  Serial.print("Free heap: ");
-  Serial.println(ESP.getFreeHeap());
 }
 
 void setup() {
@@ -86,9 +81,6 @@ void setup() {
 }
 
 void updateFirebaseState() {
-  Serial.print("Free heap: ");
-  Serial.println(ESP.getFreeHeap());
-
   if (!WiFi.isConnected() ||
       kettle.getState() != StaggKettle::State::Connected ||
       kettle.getName().size() == 0)
@@ -138,8 +130,10 @@ void pollFirebase() {
     kettle.off();
   } else if(result.get(data, "on")) {
     kettle.on();
-  }
-  if(result.get(data, "temp")) {
+  } else if (result.get(data, "calibrate")) {
+    Serial.println("Calibrate");
+    scale.nextCalibration();
+  } else if(result.get(data, "temp")) {
     if(result.get(data, "value"))
       kettle.setTemp((byte)data.intValue);
   }
@@ -195,16 +189,25 @@ void loop(void) {
     lastFirebaseStateRefresh = timeNow;
   if (timeNow < lastFirebasePoll)
     lastFirebasePoll = timeNow;
+  if (timeNow < lastHeapDebug)
+    lastHeapDebug = timeNow;  
 
-  if(refreshFirebaseState && timeNow - lastFirebaseStateRefresh > 5000) {
+  if(refreshFirebaseState &&
+     timeNow - lastFirebaseStateRefresh > firebaseStateInterval) {
     updateFirebaseState();
     refreshFirebaseState = false;
     lastFirebaseStateRefresh = timeNow;
   }
 
-  if (timeNow - lastFirebasePoll > 3000) {
+  if (timeNow - lastFirebasePoll > firebasePollInterval) {
     pollFirebase();
     lastFirebasePoll = timeNow;
+  }
+
+  if (timeNow - lastHeapDebug > 10000) {
+    Serial.print("Free heap: ");
+    Serial.println(ESP.getFreeHeap());
+    lastHeapDebug = timeNow;
   }
 
   // Input checking
