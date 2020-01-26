@@ -9,9 +9,7 @@
 #include <BLEDevice.h>
 
 #include "FSRScale.hh"
-#include "PIIDefinesExample.hh"
-
-#define ADC_PIN0 32
+#include "PIIDefines.hh"
 
 const double fillThreshold = 4.0;
 const unsigned long firebaseStateInterval = 5000;
@@ -20,7 +18,7 @@ const unsigned long firebasePollInterval = 3000;
 static StaggKettle kettle;
 static FirebaseData firebaseData;
 static Preferences prefs;
-static FSRScale scale(&prefs, ADC_PIN0);
+static FSRScale scale(32);
 static FirebaseJson json;
 
 // State tracking for UI
@@ -30,7 +28,7 @@ static bool xPower;
 static byte xCurrentTemp = -1;
 static byte xTargetTemp = -1;
 //static unsigned int xCountdown = -1;
-static double xWeight = -1;
+static double xFill = -1;
 static byte xCalMode = -1;
 static bool refreshState = false;
 static bool refreshTemps = false;
@@ -68,12 +66,12 @@ void setupWiFi() {
 
 void setup() {
   Serial.begin(115200);
+  Serial.println("Starting Fellow Stagg EKG+ bridge application...");
+  // Init scale
+  // scale.loadFromPrefs();
   // Init bluetooth
   BLEDevice::init("");
   esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
-  // NVRAM settings
-  prefs.begin("fellow-stagg", false);
-  Serial.println("Starting Fellow Stagg EKG+ bridge application...");
   // Init wifi
   setupWiFi();
   // Let's scan for a kettle!
@@ -98,7 +96,7 @@ void updateFirebaseState() {
   json.add("currentTemp", (int)kettle.getCurrentTemp());
   json.add("targetTemp", (int)kettle.getTargetTemp());
   json.add("units", (int)kettle.getUnits());
-  json.add("weight", scale.getWeight());
+  json.add("fill", scale.getFill());
   json.add("lastUpdated", String(millis()));
   if(!Firebase.setJSON(firebaseData, path.c_str(), json)) {
     Serial.println("Firebase update failed.");
@@ -177,8 +175,8 @@ void loop(void) {
     refreshFirebaseState = true;
   }
 
-  if (xWeight != scale.getWeight() || xCalMode != scale.getCalibrationMode()) {
-    xWeight = scale.getWeight();
+  if (xFill != scale.getFill() || xCalMode != scale.getCalibrationMode()) {
+    xFill = scale.getFill();
     xCalMode = scale.getCalibrationMode();
     refreshFirebaseState = true;
   }
@@ -217,10 +215,10 @@ void loop(void) {
     if (kettle.getState() == StaggKettle::State::Connected &&
         !kettle.isOn()) {
       Serial.println("A - ON!");
-      if (true || scale.getWeight() >= fillThreshold) {
+      if (true || scale.getFill() >= fillThreshold) {
         kettle.on();
       } else {
-        Serial.println("FILL LEVEL TOO LOW! " + String(scale.getWeight()) +
+        Serial.println("FILL LEVEL TOO LOW! " + String(scale.getFill()) +
                        "oz < " + String(fillThreshold) + "oz");
       }
 
