@@ -1,7 +1,7 @@
 #include "StaggKettle.hh"
 
 // Friendly names of states.
- const char* StaggKettle::StateStrings[] = {"Inactive", "Scanning...", "Found",
+const char* StaggKettle::StateStrings[] = {"Inactive", "Scanning...", "Found",
                                        "Connecting...", "Connected"};
 
 // Lots of magic numbers reverse engineered from BLE traffic capture:
@@ -20,6 +20,19 @@ static BLEUUID ekgCharUUID("00002A80-0000-1000-8000-00805f9b34fb");
 static uint8_t ekgInit[20] = {0xef, 0xdd, 0x0b, 0x30, 0x31, 0x32, 0x33,
                               0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x30,
                               0x31, 0x32, 0x33, 0x34, 0x9a, 0x6d};
+
+static const uint8_t ekgStates = 9;
+static const uint8_t ekgStateBytes[ekgStates] = {
+    3, // 0 = Power
+    3, // 1 = Hold
+    4, // 2 = Target temperature
+    4, // 3 = Current temperature
+    4, // 4 = Countdown when lifted?
+    4, // 5 = Unknown, usually 0x05, 0xFF, 0xFF, 0xFF
+    3, // 6 = Boiled/Holding?, usually 0x06, 0x00, 0x00
+    3, // 7 = Unknown, usually 0x07, 0x00, 0x00
+    3  // 8 = Kettle lifted
+    };
 
 // Don't send commands more often than every X ms.
 const unsigned long debounceDelay = 200;
@@ -172,8 +185,17 @@ bool StaggKettle::connectToServer() {
 }
 
 void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
+  if (data[0] >= ekgStates || ekgStateBytes[data[0]] != length) {
+    Serial.print("<StaggKettle::parseEvent> Wrong state length or type: ");    
+    for (int i = 0; i < length; i++) {
+      Serial.print(String(data[i], HEX));
+      Serial.print(" ");
+    }
+    Serial.println("END");
+  }
+
   switch (data[0]) {
-    case 0:  // Power
+    case 0:  // Power (length 3)
       if (data[1] == 1) {
         power = true;
         if (debug)
@@ -187,7 +209,7 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
         Serial.println(data[1]);
       }
       break;
-    case 1:  // Hold
+    case 1:  // Hold (length 3)
       if (data[1] == 1) {
         hold = true;
         if (debug)
@@ -203,7 +225,7 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
         Serial.println(data[1]);
       }
       break;
-    case 2:  // Target temperature
+    case 2:  // Target temperature (length 4)
       targetTemp = data[1];
       units = data[2] == 1 ? TempUnits::Fahrenheit : TempUnits::Celsius;
       if (debug) {
@@ -212,7 +234,7 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
         Serial.println(units == TempUnits::Fahrenheit ? "F" : "C");        
       }
       break;
-    case 3:  // Current temperature
+    case 3:  // Current temperature (length 4)
       currentTemp = data[1];
       units = data[2] == 1 ? TempUnits::Fahrenheit : TempUnits::Celsius;      
       if (debug) {
@@ -221,14 +243,14 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
         Serial.println(units == TempUnits::Fahrenheit ? "F" : "C");
       }
       break;
-    case 4:  // Countdown when lifted?
+    case 4:  // Countdown when lifted? (length 4)
       countdown = data[1];
       if(debug) {
         Serial.print("<StaggKettle::parseEvent> Countdown ");
         Serial.println(String(countdown));
       }
       break;
-    case 8:  // Kettle lifted
+    case 8:  // Kettle lifted (length 3)
       if (data[1] == 0) {
         if(debug)
           Serial.println("<StaggKettle::parseEvent> Kettle lifted!");
@@ -242,10 +264,10 @@ void StaggKettle::parseEvent(const uint8_t* data, size_t length, bool debug) {
         Serial.println(data[1]);
       }
       break;
-    case 5:  // Unknown, usually 0x05, 0xFF, 0xFF, 0xFF
-    case 6:  // Unknown, usually 0x06, 0x00, 0x00
+    case 5:  // Unknown (length 4), usually 0x05, 0xFF, 0xFF, 0xFF
+    case 6:  // Unknown (length 3), usually 0x06, 0x00, 0x00
       // This may be a "kettle has boiled" signal, or "kettle holding" signal.
-    case 7:  // Unknown, usually 0x07, 0x00, 0x00
+    case 7:  // Unknown (length 3), usually 0x07, 0x00, 0x00
     default:
       if (unknownStates.count(data[0]) != 0 &&
           memcmp(data, unknownStates[data[0]], length) == 0)
@@ -273,24 +295,40 @@ void StaggKettle::onNotify(BLERemoteCharacteristic* c, uint8_t* pData,
   }
 
   // Pattern recognizer that expects frames of the form:
-  // 0xefdd followed by 0..62 arbitrary bytes.
+  // 0xefdd followed by some bytes. ekgStateBytes holds the number of bytes for
+  // each state we expect. Some complicated logic here to parse frames as soon
+  // as we get them, and also skip frames in case we get fragments or bad data.
   for (int i = 0; i < length; i++) {
+    // Look for the first frame separator byte.
     if (bufferState == 0 && pData[i] == 0xef) {
       bufferState = 1;
       bufferPos = 0;
       continue;
+    // Look for the second frame separator byte.  
     } else if (bufferState == 1 && pData[i] == 0xdd) {
       bufferState = 2;
       bufferPos = 0;
       continue;
+    // The rest are data bytes.  
     } else if (bufferState == 2) {
       buffer[bufferPos] = pData[i];
-      if (bufferPos >= 63) {
+      // If we have at least one byte, we know the type of state frame that we
+      // got, so check if it's in range of the states we know about, and if so,
+      // if we have that number of bytes, we have a complete frame, so parse it!
+      if (bufferPos > 0 && buffer[0] < ekgStates &&
+          bufferPos + 1 >= ekgStateBytes[buffer[0]]) {
+        this->parseEvent(buffer, bufferPos + 1, false);
+        bufferPos = 0;
+        bufferState = 1;
+      // Some weirdly long frame, probably something wrong, skip it.
+      } else if (bufferPos >= 63) {
         bufferState = 0;
         bufferPos = 0;
         continue;
-      }
-      if (i + 1 < length && pData[i] == 0xef && pData[i + 1] == 0xdd) {
+      // If we see 0xef, peek forward and see if we have a frame separator. If
+      // we do, then attempt to parse what we got and move on to the next frame.
+      // Shouldn't hit this block unless something is wrong.
+      } else if (i + 1 < length && pData[i] == 0xef && pData[i + 1] == 0xdd) {
         if (bufferPos > 1) this->parseEvent(buffer, bufferPos - 1, false);
         bufferPos = 0;
         bufferState = 1;
@@ -310,7 +348,7 @@ void StaggKettle::sendCommand(StaggKettle::Command cmd) {
 
   Serial.println(String("<StaggKettle::sendCommand> ") + String(cmd));
   uint8_t buf[8];
-  buf[0] = 0xef; buf[1] = 0xdd; // Magic, packet start
+  buf[0] = 0xef; buf[1] = 0xdd; // Magic, frame start
   buf[2] = 0x0a; // Command flag?
   buf[3] = sequence;
   switch (cmd) {
@@ -337,8 +375,13 @@ void StaggKettle::sendCommand(StaggKettle::Command cmd) {
 
 void StaggKettle::setTemp(byte temp) {
   userTemp = temp;
-  if (userTemp > 212) userTemp = 212;
-  if (userTemp < 160) userTemp = 160;
+  if (units == TempUnits::Fahrenheit) {
+    if (userTemp > 212) userTemp = 212;
+    if (userTemp < 160) userTemp = 160;
+  } else {
+    if (userTemp > 100) userTemp = 100;
+    if (userTemp < 65) userTemp = 65;
+  }
   qCommands.push(StaggKettle::Command::Set);
 }
 

@@ -4,7 +4,7 @@
 FSRScale::FSRScale(byte pin) : pin(pin) {
   // Some reasonable numbers from a good calibration:
   coeffs[0] = -0.08; // ax^2 -0.08
-  coeffs[1] = 24.83; // bx 16.83?
+  coeffs[1] = 13.83; // bx 16.83?
   coeffs[2] = 3019.81; // c 2819.81?
 }
 

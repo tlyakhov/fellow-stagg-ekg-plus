@@ -7,13 +7,22 @@
 #include <FirebaseESP32.h>
 #include <Preferences.h>
 #include <BLEDevice.h>
+#include <Adafruit_SSD1306.h>
 
 #include "FSRScale.hh"
-#include "PIIDefines.hh"
+#include "PIIDefinesExample.hh"
 
-const double fillThreshold = 4.0;
+
+
+const int fillThreshold = 3.0;
 const unsigned long firebaseStateInterval = 5000;
 const unsigned long firebasePollInterval = 3000;
+
+// For an SSD1306 display connected to I2C (SDA, SCL pins)
+const uint8_t ScreenWidth = 128;
+const uint8_t ScreenHeight = 64;
+const int8_t ScreenResetPin = -1; // Reset pin # (or -1 if sharing Arduino reset pin)
+Adafruit_SSD1306 display(ScreenWidth, ScreenHeight, &Wire, ScreenResetPin);
 
 static StaggKettle kettle;
 static FirebaseData firebaseData;
@@ -28,7 +37,7 @@ static bool xPower;
 static byte xCurrentTemp = -1;
 static byte xTargetTemp = -1;
 //static unsigned int xCountdown = -1;
-static double xFill = -1;
+static int xFill = -1;
 static byte xCalMode = -1;
 static bool refreshState = false;
 static bool refreshTemps = false;
@@ -67,6 +76,14 @@ void setupWiFi() {
 void setup() {
   Serial.begin(115200);
   Serial.println("Starting Fellow Stagg EKG+ bridge application...");
+  // Init display
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
+    Serial.println("SSD1306 allocation failed");
+  }
+  // Show initial display buffer contents on the screen --
+  // the library initializes this with an Adafruit splash screen.
+  display.display();
   // Init scale
   // scale.loadFromPrefs();
   // Init bluetooth
@@ -127,7 +144,12 @@ void pollFirebase() {
   if(result.get(data, "off")) {
     kettle.off();
   } else if(result.get(data, "on")) {
-    kettle.on();
+    if (scale.getFill() >= fillThreshold) {
+      kettle.on();
+    } else {
+      Serial.println("FILL LEVEL TOO LOW! " + String(scale.getFill()) +
+                       "oz < " + String(fillThreshold) + "oz");
+    }
   } else if (result.get(data, "calibrate")) {
     Serial.println("Calibrate");
     scale.nextCalibration();
@@ -136,6 +158,22 @@ void pollFirebase() {
       kettle.setTemp((byte)data.intValue);
   }
   Firebase.deleteNode(firebaseData, path.c_str());
+}
+
+void drawScale() {
+  int fh = 10;
+  int ypos = 32 - fh / 2;
+  display.setCursor(32, ypos);
+  if (scale.getCalibrationMode() == 0) {
+    display.setTextColor(SSD1306_WHITE);
+    display.println("Fill: " + String(scale.getFill()) + "oz");
+  } else {
+    display.setTextColor(SSD1306_WHITE);
+    display.println(
+        "Fill kettle to exactly " +
+            String(Calibration::Ounces[scale.getCalibrationMode() - 1]) +
+            "oz, then click button");
+  }
 }
 
 void loop(void) {
@@ -179,6 +217,9 @@ void loop(void) {
     xFill = scale.getFill();
     xCalMode = scale.getCalibrationMode();
     refreshFirebaseState = true;
+    display.clearDisplay();
+    drawScale();
+    display.display();
   }
 
   unsigned long timeNow = millis();
@@ -208,32 +249,5 @@ void loop(void) {
     lastHeapDebug = timeNow;
   }
 
-  // Input checking
 
-  /*if (M5.BtnA.wasReleased()) {
-    // M5.Speaker.beep();
-    if (kettle.getState() == StaggKettle::State::Connected &&
-        !kettle.isOn()) {
-      Serial.println("A - ON!");
-      if (true || scale.getFill() >= fillThreshold) {
-        kettle.on();
-      } else {
-        Serial.println("FILL LEVEL TOO LOW! " + String(scale.getFill()) +
-                       "oz < " + String(fillThreshold) + "oz");
-      }
-
-    } else {
-      Serial.println("A - OFF!");
-      kettle.off();
-    }
-  } else if (M5.BtnB.wasReleased()) {
-    Serial.println("B - SET");
-    if(kettle.getTargetTemp() < 210)
-      kettle.setTemp(kettle.getTargetTemp() + 5);
-    else
-      kettle.setTemp(160);
-  } else if (M5.BtnC.wasReleased()) {
-    Serial.println("C - CALIBRATE");
-    scale.nextCalibration();
-  }*/
 }
